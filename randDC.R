@@ -3,19 +3,8 @@ library(dplyr)
 CyDat <- read.table("CyDat.txt", head = TRUE,stringsAsFactors = TRUE)
 adjusted_counts <- read.table("adjusted_counts.v3.txt")
 gene_list <- colnames(adjusted_counts)
-length(gene_list)
-samp.F1 <- list()
-samp.M1 <- list()
-samp.F2 <- list()
-samp.M2 <- list()
-samp.F3 <- list()
-samp.M3 <- list()
-samp.M1case_cor <- list()
-samp.M2case_cor <- list()
-samp.M3case_cor <- list()
-samp.F1case_cor <- list()
-samp.F2case_cor <- list()
-samp.F3case_cor <- list()
+samp.F1 <- list();samp.M1 <- list();samp.F2 <- list();samp.M2 <- list();samp.F3 <- list();samp.M3 <- list();
+samp.M1case_cor <- list();samp.M2case_cor <- list();samp.M3case_cor <- list();samp.F1case_cor <- list();samp.F2case_cor <- list();samp.F3case_cor <- list();
 
 mtDNA <- c("BR","LB","FHL")
   for(i in 1:100){
