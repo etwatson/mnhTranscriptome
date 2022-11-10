@@ -1,3 +1,7 @@
+library(VennDiagram)
+library(edgeR)
+
+# Remove poorly sequenced samples identified in MDS plot
 CyDat <- CyDat[!CyDat$ID %in% c("SE6480_SA72437","SE6480_SA72439","SE6484_SA72395"),] 
 adjusted_counts <- adjusted_counts[!rownames(adjusted_counts) %in% c("SE6480_SA72437","SE6480_SA72439","SE6484_SA72395"),]
 
@@ -22,9 +26,9 @@ for(i in mtDNA){
   dgList <- estimateGLMCommonDisp(dgList, design=designMat)
   dgList <- estimateGLMTrendedDisp(dgList, design=designMat)
   dgList <- estimateGLMTagwiseDisp(dgList, design=designMat)
-  pdf(paste(i,"_MDS.pdf", sep = ""))
-  plotMDS(dgList, main=i)
-  dev.off()
+    pdf(paste(i,"_MDS.pdf", sep = ""))
+    plotMDS(dgList, main=i)
+    dev.off()
   fit <- glmQLFit(dgList, designMat)
   lrt <- glmQLFTest(fit, coef=2)
   sbgList[[i]] <- lrt
@@ -36,36 +40,17 @@ for(i in mtDNA){
   Tsbg.idList [[i]] <- decideTestsDGE(sbgList[i][[1]], p=1.0e-12,adjust.method = "bonf")
   Tsbg.idList [[i]] <- rownames(sbgList[i][[1]])[as.logical(Tsbg.idList[[i]])]}
 
-SDsbg.id <- sbg.idList["SD"][[1]]
-BRsbg.id <- sbg.idList["BR"][[1]]
-LBsbg.id <- sbg.idList["LB"][[1]]
-FHLsbg.id <- sbg.idList["FHL"][[1]]
+# Sex-biased genes
+SDsbg.id <- sbg.idList["SD"][[1]];BRsbg.id <- sbg.idList["BR"][[1]];LBsbg.id <- sbg.idList["LB"][[1]];FHLsbg.id <- sbg.idList["FHL"][[1]];
+# Top sex-biased genes  
+SDtsbg.id <- Tsbg.idList["SD"][[1]];BRtsbg.id <- Tsbg.idList["BR"][[1]];LBtsbg.id <- Tsbg.idList["LB"][[1]];FHLtsbg.id <- Tsbg.idList["FHL"][[1]];
+# Sex-limited genes
+SDslg.id <- slg.idList["SD"][[1]];BRslg.id <- slg.idList["BR"][[1]];LBslg.id <- slg.idList["LB"][[1]];FHLslg.id <- slg.idList["FHL"][[1]];
 
-SDtsbg.id <- Tsbg.idList["SD"][[1]]
-BRtsbg.id <- Tsbg.idList["BR"][[1]]
-LBtsbg.id <- Tsbg.idList["LB"][[1]]
-FHLtsbg.id <- Tsbg.idList["FHL"][[1]]
-
-SDslg.id <- slg.idList["SD"][[1]]
-BRslg.id <- slg.idList["BR"][[1]]
-LBslg.id <- slg.idList["LB"][[1]]
-FHLslg.id <- slg.idList["FHL"][[1]]
-
+# Investigate gene groupings with Venn diagrams
 sbg.overlap<- VennDiagram::calculate.overlap(list(SD=SDsbg.id, BR=BRsbg.id, LB=LBsbg.id, FHL= FHLsbg.id))
-hsSBG <- c("a1","a2","a3","a7","a8","a13","a14")
-BR.sbg <- "a14"
-SD.sbg <- "a9"
-LB.sbg <- "a1"
-FHL.sbg <- "a3"
-cSBG <- "a6"
-
-BR.lSBG.id <- as.vector(unlist(sbg.overlap[BR.sbg]))
-SD.lSBG.id <- as.vector(unlist(sbg.overlap[SD.sbg]))
-LB.lSBG.id <- as.vector(unlist(sbg.overlap[LB.sbg]))
-FHL.lSBG.id <- as.vector(unlist(sbg.overlap[FHL.sbg]))
-hsSBG.id <- as.vector(unlist(sbg.overlap[hsSBG]))
-cSBG.id <- as.vector(unlist(sbg.overlap[cSBG]))
-
+hsSBG <- c("a1","a2","a3","a7","a8","a13","a14");BR.sbg <- "a14";SD.sbg <- "a9";LB.sbg <- "a1";FHL.sbg <- "a3";cSBG <- "a6";
+BR.lSBG.id <- as.vector(unlist(sbg.overlap[BR.sbg]));SD.lSBG.id <- as.vector(unlist(sbg.overlap[SD.sbg]));LB.lSBG.id <- as.vector(unlist(sbg.overlap[LB.sbg]));FHL.lSBG.id <- as.vector(unlist(sbg.overlap[FHL.sbg]));hsSBG.id <- as.vector(unlist(sbg.overlap[hsSBG]));cSBG.id <- as.vector(unlist(sbg.overlap[cSBG]));
 tsbg.overlap<- VennDiagram::calculate.overlap(list(SD=SDtsbg.id, BR=BRtsbg.id, LB=LBtsbg.id, FHL= FHLtsbg.id))
 slg.overlap<- VennDiagram::calculate.overlap(list(SD=SDslg.id, BR=BRslg.id, LB=LBslg.id, FHL= FHLslg.id))
 
