@@ -2,6 +2,12 @@ library(DGCA)
 library(dplyr)
 CyDat <- read.table("CyDat.txt", head = TRUE,stringsAsFactors = TRUE)
 adjusted_counts <- read.table("adjusted_counts.v4.txt")
+
+# Remove poorly sequenced samples identified in MDS plot
+CyDat <- CyDat[!CyDat$ID %in% c("SE6480_SA72437","SE6480_SA72439","SE6484_SA72395"),] 
+adjusted_counts <- adjusted_counts[!rownames(adjusted_counts) %in% c("SE6480_SA72437","SE6480_SA72439","SE6484_SA72395"),]
+
+
 gene_list <- colnames(adjusted_counts)
 samp.F1 <- list();samp.M1 <- list();samp.F2 <- list();samp.M2 <- list();samp.F3 <- list();samp.M3 <- list();
 samp.M1case_cor <- list();samp.M2case_cor <- list();samp.M3case_cor <- list();samp.F1case_cor <- list();samp.F2case_cor <- list();samp.F3case_cor <- list();
