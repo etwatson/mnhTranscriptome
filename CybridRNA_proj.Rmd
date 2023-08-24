@@ -1,0 +1,196 @@
+---
+title: "Sex-biased gene expression networks in mitonuclear hybrids"
+author: "Eric T. Watson"
+output:
+  html_document:
+    df_print: paged
+  always_allow_html: yes
+  pdf_document: default
+---
+# Introduction
+
+
+## HSB (Hisat2 -- StringTie -- Ballgown) approach
+
+* Assemble reads into super-reads, which assembles, aligns, and pre-processes super-reads for use with StringTie2.
+* Map assembled (super-reads) and unassembled reads to the appropriate reference (nuc + mtDNA)
+  * HiSat2 graph-based alignment
+    * genome index built with the `--ss` and `--exon` options
+    * args: `--rna-strandness FR`, `--dta`
+* perform SAM/BAM manipulations and calculate read mapping statistics (flagstat)
+* perform stringtie on each sample, mapping to the appropriate gff (nuc + mtDNA)
+  * stringtie takes as input spliced alignments in coordinate-sorted SAM/BAM/CRAM format and produces a GTF output which consists of assembled transcript structures and their estimated expression levels (FPKM/TPM and base coverage values)
+    * args: `-f 0.05`, `-c 5`, `-m 250`, `--rf`
+* remove temporary files (.sam, .bam, .fastq)
+* Following this, samples were re-run using the `-B -e` options in order to estimate transcript abundances and generate read coverage tables and using the merged set of transcripts as observed across all samples as well as the options `-f 0.05 -c 5 -m 250`.
+* Gene and transcript matrices were extracted using the `prepDE.py` script. 
+
+
+
+```{bash reads, eval=FALSE, include=FALSE}
+id=(S1 S2 S3 S5);
+for i in "${id[@]}";
+	do if [ $i = "S1" ]; then mt="BR";
+	elif [ $i = "S2" ]; then mt="FHL";
+	elif [ $i = "S3" ]; then mt="LB";
+	else mt="SD";
+	fi;
+	while read line;
+		do bgzip -@20 -dc ../reads/${line}.R1.fastq.gz > ${line}.R1.fastq; bgzip -@20 -dc ../reads/${line}.R2.fastq.gz > ${line}.R2.fastq;
+		perl /media/mcclintock/etw/cybrid_rna/ColdFront/superreads.pl ${line}.R1.fastq ${line}.R2.fastq -t 30 -l ${line}.superreads.fastq /media/mcclintock/etw/cybrid_rna/ColdFront/masurca/MaSuRCA-4.0.9;bgzip -@20 -c ${line}.superreads.fastq > ${line}.superreads.fq.gz;
+		hisat2 -p 30 -x /media/mcclintock/etw/cybrid_data/cybrid_nuc/reference_genomes/SDv2.2_${mt} -1 ${line}.R1.notAssembled.fq.gz -2 ${line}.R2.notAssembled.fq.gz -U ${line}.superreads.fq.gz -S ${line}.sam --rna-strandness FR --dta --rg-id ${line} --rg SM:${line};
+		/usr/bin/samtools view -@30 -bh ${line}.sam > ${line}.bam;/usr/bin/samtools sort -@30 ${line}.bam > ${line}.srt.bam;rm ${line}.sam;rm ${line}.bam;
+		/usr/bin/samtools flagstat -@30 ${line}.srt.bam > ${line}.flagStat;
+		stringtie ${line}.srt.bam -p 30 -f 0.05 -c 5 -m 250 --rf -G /media/mcclintock/etw/cybrid_data/cybrid_nuc/reference_genomes/SDv2.2_${mt}.gff -l ${line} -o ${line}.StringTie.v3.gtf;
+		rm ${line}.R1.fastq; rm ${line}.R2.fastq; rm ${line}.superreads.fastq;
+	done < ${i}.id
+```
+
+
+```{r diagrammR, echo=FALSE, fig.height=10, fig.width=10, message=FALSE, warning=FALSE}
+library(DiagrammeR)
+grViz("digraph {
+
+graph [layout = dot]
+
+# define the global styles of the nodes. We can override these in box if we wish
+node [shape = rectangle, style = filled, fillcolor = Linen]
+
+data1 [label = 'forward.R1.fq.gz', shape = folder, fillcolor = Beige]
+data2 [label = 'reverse.R2.fq.gz', shape = folder, fillcolor = Beige]
+SR [label = 'superreads.fq.gz', shape = rectancle, fillcolor = lightblue]
+R1 [label = 'R1.notAssembled.fq.gz', shape = rectancle, fillcolor = lightblue]
+R2 [label = 'R2.notAssembled.fq.gz', shape = rectancle, fillcolor = lightblue]
+preprocess [label =  'MaSuRCA: superreads.pl']
+map [label = 'HiSat2 index: --ss, --exon; HiSat2 map: --rna-strandness FR, --dta']
+gcm [label= 'gene_count_matrix \n 63595 x 179']
+st [label= 'stringtie count: -f 0.05, -c 5, -m 250, --rf; stringtie merge: -B, -e; prepDE.py']
+filt [label =  'HTSfilter: normalization=DESeq\n 24482 x 173']
+bf [label= 'ComBat_seq: covariate matrix = ~ Sex + Mito']
+sbe [label= 'Sex-biased expression', shape = rectancle,fillcolor = green]
+DGCA [label= 'Network analysis', shape = rectancle,fillcolor = green]
+mt [label= 'Mitochondrial expression', shape = rectancle,fillcolor = green]
+
+
+# edge definitions with the node IDs
+{data1 data2}  -> preprocess -> {R1 SR R2} -> map -> st -> gcm ->filt ->bf -> {sbe DGCA mt}
+}")
+```
+
+### Analysis 
+
+1. Prepare the environment for analysis by loading all important libraries and defining any custom functions.
+
+```{r envinit, message=FALSE, warning=FALSE, include=FALSE}
+library(edgeR, quietly = TRUE)
+library(DESeq2, quietly = TRUE)
+library(sva, quietly = TRUE)
+library(dendextend, quietly = TRUE)
+library(dplyr, quietly = TRUE)
+library(reshape2, quietly = TRUE)
+library(vsn, quietly = TRUE)
+library(HTSFilter, quietly = TRUE)
+library(DGCA, quietly = TRUE)
+library(matrixStats, quietly = TRUE)
+library(iDINGO, quietly = TRUE)
+```
+
+2. Import data and covariates. Covariates include batch, mtDNA, Sex, and Clutch.
+
+```{r dataIN, eval=FALSE, message=FALSE, warning=FALSE, include=FALSE}
+Cy <- read.csv("/media/ark/Dropbox/cybrid_rnaProj/cybrid_rna/count_matrices/gene_count_matrix.v3.csv") # 63595 x 179
+
+CyExpr0 = as.data.frame(t(Cy[, -1]));
+names(CyExpr0) = Cy$gene_id;
+rownames(CyExpr0) = names(Cy)[-1];
+t.CyExpr <- as.matrix(t(CyExpr0))
+row.names(t.CyExpr) <- colnames(CyExpr0)
+colnames(t.CyExpr) <- row.names(CyExpr0)
+
+# Import experimental data
+CyDat <- read.table("/media/ark/Dropbox/cybrid_rnaProj/cybrid_rna/CyDat.txt", head = TRUE,stringsAsFactors = TRUE)
+row.names(CyDat) <- CyDat$ID
+# CyDat$ID <- NULL
+CyDat$Lane <- factor(CyDat$Lane)
+CyDat$Clutch <- factor(CyDat$Clutch)
+rm(Cy); rm(CyExpr0)
+
+# These samples have low coverage 
+
+bad_samples <- c("SE6484_SA72395","SE6480_SA72438","SE6481_SA72344","SE6480_SA72437","SE6480_SA72439")
+t.CyExpr <- t.CyExpr[,!colnames(t.CyExpr) %in% bad_samples]
+CyDat <- CyDat[!row.names(CyDat) %in% bad_samples,]
+CyDat <- droplevels(CyDat)
+
+```
+
+3. Broadly filter genes with low inter-sample variance
+    * To reduce the impact of p-adjustment procedures, we identify and remove genes that appear to generate an uninformative signal (Bourgon, Gentleman, and Huber 2010); this in turn moderates the correction needed to adjust for multiple testing.
+    * The HTSFilter package implements a data-based filtering procedure based on the calculation of a similarity index among biological replicates for read counts. This technique filters transcriptome sequencing data and removes genes with low, constant expression levels without incorrectly removing those that would otherwise have been identified as DE. Filtering similarity is defined using the global Jaccard index - the average Jaccard index calculated between pairs of replicates within each experimental condition; see  Rau et al. (2013) for more details.
+    * We use DESeq2 normalization, since we use this software for differential expression analysis
+
+```{r HTSFilter, eval=FALSE, echo=FALSE, message=FALSE, warning=FALSE, include=FALSE}
+# keep track of mt genes to make sure they arent filtered out
+# genes <- c("atp6","atp8","nad1","nad2","nad3","nad4","nad4l","nad5" ,"nad6","cob","cox1","cox2","cox3")
+# tmp <- as.data.frame(t.CyExpr)
+# mtEx <- tmp[rownames(tmp) %in% genes, ]
+# length(rownames(mtEx))
+# 13 genes
+
+filtCond <- CyDat; filtCond$Mito.num <- NULL; filtCond$Sex.num <-NULL;filtCond$ID <- NULL;filtCond$Lane<- NULL; filtCond$Clutch <- NULL
+filtCond$X <- as.numeric(interaction(filtCond$Mito, filtCond$Sex))
+filtCond <- filtCond[,3]
+filter <- HTSFilter(t.CyExpr, filtCond,normalization="DESeq")
+mat <- filter$filteredData
+CyExpr_filt <- mat; rm(mat);
+
+# tmp <- as.data.frame(CyExpr_filt)
+# mtEx <- tmp[rownames(tmp) %in% genes, ]
+# length(rownames(mtEx))
+# rm(tmp)
+# 13 mt genes retained
+
+```
+4. Adjust for batch and clutch effects, retain mito and sex effects
+    * ComBat-seq is a batch effect adjustment tool for RNA-seq count data. It uses a negative binomial regression to model batch effects for RNA-seq reads, then provides adjusted data by mapping the original data to an expected distribution if there were no batch effects. ComBat-seq specifies different dispersion parameters across batches, allowing for modeling of the variance of gene expression.
+
+```{r comBat, eval=FALSE, message=FALSE, warning=FALSE, include=FALSE}
+#load2eval
+
+covar_mat <- cbind(CyDat$Sex,CyDat$Mito) # Clutch and batch are excluded for adjustment
+batch <- CyDat$Lane
+adjusted_counts <- ComBat_seq(CyExpr_filt, batch=batch, group=NULL, covar_mod=covar_mat)
+adjusted_counts <- t(adjusted_counts)
+
+hist(log(adjusted_counts+1), col="grey", breaks=25, main="Histogram of log transformed counts", xlab="Log(counts+1)")
+
+
+save(CyDat,adjusted_counts, file = "CybridRNA_TEMP.Rdata")
+```
+
+
+```{r hclust, echo=FALSE, fig.height=8, fig.width=12, message=FALSE, warning=FALSE}
+load("~/CybridRNA_TEMP.Rdata")
+dend <- adjusted_counts %>% scale %>% dist(method = "euclidian") %>% hclust(method = "ward.D2") %>% as.dendrogram
+colors_to_use <- CyDat[order.dendrogram(dend),"Sex.num"]
+labels_colors(dend) <- colors_to_use
+plot(dend)
+CyDat[CyDat$ID %in% c("SE6486_SA72288","SE6483_SA72316","SE6485_SA72304","SE6482_SA72411"),]
+```
+
+### Removing those potentially mis-labeled samples:
+
+```{r hClust2, echo=FALSE, fig.height=8, fig.width=12, message=FALSE, warning=FALSE}
+bad_samples <- c("SE6486_SA72288","SE6483_SA72316","SE6485_SA72304","SE6482_SA72411")
+adjusted_counts <- adjusted_counts[!row.names(adjusted_counts) %in% bad_samples,]
+CyDat <- CyDat[!row.names(CyDat) %in% bad_samples,]
+CyDat <- droplevels(CyDat)
+dend <- adjusted_counts %>% scale %>% dist(method = "euclidian") %>% hclust(method = "ward.D2") %>% as.dendrogram
+colors_to_use <- CyDat[order.dendrogram(dend),"Sex.num"]
+labels_colors(dend) <- colors_to_use
+plot(dend)
+```
+
+
+
+
